@@ -81,11 +81,15 @@ public class CassandraConfig {
         try (CqlSession bootstrap = openBootstrapSession()) {
             log.info("Inicializando schema do Cassandra (keyspace={}, rf={})...", keyspaceName, replicationFactor);
 
+            // O nome do DC no CREATE KEYSPACE deve ser idêntico ao reportado pelos nós
+            // via gossip — que é o valor de CASSANDRA_DC no docker-compose.yml.
+            // Usar a variável localDatacenter (lida de spring.cassandra.local-datacenter)
+            // garante consistência: se o yaml diz "dc1", o keyspace também usa "dc1".
             bootstrap.execute(String.format(
                     "CREATE KEYSPACE IF NOT EXISTS %s " +
-                    "WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': %d} " +
+                    "WITH replication = {'class': 'NetworkTopologyStrategy', '%s': %d} " +
                     "AND durable_writes = true;",
-                    keyspaceName, replicationFactor
+                    keyspaceName, localDatacenter, replicationFactor
             ));
             log.info("Keyspace '{}' verificado/criado.", keyspaceName);
 
