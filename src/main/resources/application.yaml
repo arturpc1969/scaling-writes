@@ -1,3 +1,50 @@
 spring:
   application:
     name: scaling-writes
+
+  # ─── Kafka ─────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    consumer:
+      group-id: scaling-writes-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.IntegerDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+      properties:
+        # Informa ao JacksonJsonDeserializer qual tipo usar ao desserializar o valor
+        spring.json.trusted.packages: "com.arturpc.scaling_writes.domain"
+        spring.json.value.default.type: "com.arturpc.scaling_writes.domain.WriteEvent"
+
+  # ─── Cassandra ──────────────────────────────────────────────────────────────
+  cassandra:
+    contact-points: localhost:9042
+    # O Cassandra usa "datacenter1" como nome padrão do DC quando
+    # CASSANDRA_ENDPOINT_SNITCH não é GossipingPropertyFileSnitch ou quando
+    # CASSANDRA_DC não é efetivamente aplicado na imagem oficial.
+    local-datacenter: datacenter1
+    # keyspace-name é omitido aqui intencionalmente:
+    # o driver conecta sem keyspace, o CassandraConfig cria o keyspace,
+    # e um CqlSession com keyspace é provido via @Bean customizado.
+    schema-action: NONE
+
+# ─── Configurações da aplicação ─────────────────────────────────────────────
+app:
+  cassandra:
+    keyspace-name: scaling_writes
+    # Fator de replicação do keyspace.
+    # Nó único (dev): 1  |  Cluster 3 nós (--profile cluster): 3
+    replication-factor: 1
+
+  batch:
+    # Intervalo entre cada flush do buffer para o Cassandra (em milissegundos)
+    # Valor padrão: 5000ms = 5 segundos
+    # Aumente para acumular batches maiores; diminua para latência menor
+    flush-interval-ms: 60000
+
+# ─── SpringDoc / Swagger UI ─────────────────────────────────────────────────
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /api-docs
