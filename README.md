@@ -266,20 +266,39 @@ Abra `http://localhost:9000` para visualizar o tópico `write-events`, suas part
 
 ### Cluster de 3 nós Cassandra (opcional)
 
-Para simular o cluster completo com 3 nós, o Docker precisa de pelo menos **6 GB de memória** configurada. Ative com:
+Para simular o cluster completo com 3 nós, o Docker precisa de pelo menos **6 GB de memória** configurada.
+
+**Passo 1:** Pare os containers e limpe os volumes (necessário para que o novo nó seed ingresse o cluster com o snitch correto):
 
 ```bash
-# Aumente a memória do Docker: Settings > Resources > Memory >= 6 GB
+docker compose down -v
+```
+
+**Passo 2:** Aumente a memória do Docker em Settings > Resources > Memory para **>= 6 GB**, depois suba com o perfil `cluster`:
+
+```bash
 docker compose --profile cluster up -d
 ```
 
-Altere também o fator de replicação no `application.yaml`:
+Aguarde até que todos os 3 nós estejam ativos. Você pode verificar com:
+
+```bash
+docker exec cassandra nodetool status
+# Resultado esperado: 3 linhas com status "UN" (Up/Normal)
+# UN  172.x.x.x  cassandra
+# UN  172.x.x.x  cassandra-node2
+# UN  172.x.x.x  cassandra-node3
+```
+
+**Passo 3:** Altere o fator de replicação no `application.yaml`:
 
 ```yaml
 app:
   cassandra:
     replication-factor: 3
 ```
+
+**Passo 4:** Inicie a aplicação normalmente. O `CassandraConfig` criará (ou recriará) o keyspace com `replication_factor=3`, distribuindo réplicas pelos 3 nós.
 
 ---
 
@@ -292,7 +311,7 @@ Todas as configurações ficam em `src/main/resources/application.yaml`.
 | `spring.kafka.bootstrap-servers` | `localhost:9092` | Endereço do broker Kafka |
 | `spring.kafka.consumer.group-id` | `scaling-writes-group` | Consumer group dos workers |
 | `spring.cassandra.contact-points` | `localhost:9042` | Endereço do nó Cassandra |
-| `spring.cassandra.local-datacenter` | `datacenter1` | Nome do datacenter Cassandra |
+| `spring.cassandra.local-datacenter` | `dc1` | Nome do datacenter Cassandra |
 | `app.cassandra.keyspace-name` | `scaling_writes` | Keyspace utilizado |
 | `app.cassandra.replication-factor` | `1` | Fator de replicação do keyspace |
 | `app.batch.flush-interval-ms` | `60000` | Intervalo do flush do buffer (ms) |
@@ -303,6 +322,6 @@ Todas as configurações ficam em `src/main/resources/application.yaml`.
 
 **Memória do Docker:** A imagem `cassandra:4.1` aloca heap JVM automaticamente com base na RAM disponível, podendo usar mais de 1 GB. O `docker-compose.yml` configura `MAX_HEAP_SIZE=512M` e `mem_limit=1200m` para evitar OOM kills em ambientes com memória limitada.
 
-**Nome do datacenter:** A imagem oficial `cassandra:4.1` usa `datacenter1` como nome padrão do DC, independente da variável `CASSANDRA_DC` definida no compose. Por isso, a configuração `local-datacenter` na aplicação e o `NetworkTopologyStrategy` no keyspace usam `datacenter1`.
+**Nome do datacenter:** Todos os nós do cluster (seed e adicionais) usam `CASSANDRA_DC: dc1` com `CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch` no `docker-compose.yml`. O `GossipingPropertyFileSnitch` é essencial para que todos os nós se reconheçam como pertencentes ao mesmo DC via gossip protocol. A configuração `local-datacenter: dc1` no `application.yaml` e o nome de DC no `CREATE KEYSPACE` (lido dinamicamente de `${spring.cassandra.local-datacenter}`) devem ser idênticos ao valor de `CASSANDRA_DC` — qualquer inconsistência faz o Cassandra não colocar réplicas em alguns nós, concentrando os dados em um subconjunto do cluster.
 
 **Inicialização do schema:** O driver Cassandra não permite conectar a um keyspace inexistente. O `CassandraConfig` resolve isso abrindo uma sessão bootstrap sem keyspace, criando o schema, e depois fornecendo a sessão definitiva (com keyspace) como bean `@Primary` para toda a aplicação.

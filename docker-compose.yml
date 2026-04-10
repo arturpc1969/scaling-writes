@@ -66,6 +66,11 @@ services:
       CASSANDRA_CLUSTER_NAME: scaling-cluster
       CASSANDRA_DC: dc1
       CASSANDRA_RACK: rack1
+      # GossipingPropertyFileSnitch é necessário para que todos os nós do cluster
+      # se reconheçam como pertencentes ao mesmo DC (dc1). Sem isso, o nó seed usa
+      # SimpleSnitch (padrão), que ignora DC/rack — causando inconsistência de
+      # placement com os demais nós que usam GossipingPropertyFileSnitch.
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
       # MAX_HEAP_SIZE e HEAP_NEWSIZE controlam a heap da JVM do Cassandra.
       # Sem essa configuração, o Cassandra calcula automaticamente e pode
       # alocar >1GB, causando OOM kill (exit 137) no Docker.
