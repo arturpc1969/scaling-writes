@@ -1,0 +1,141 @@
+services:
+
+  # ─── Zookeeper ───────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - scaling-net
+
+  # ─── Kafka ───────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    networks:
+      - scaling-net
+
+  # ─── Kafdrop (UI Kafka) ───────────────────────────────────────────────────────
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    depends_on:
+      - kafka
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+    networks:
+      - scaling-net
+
+  # ─── Cassandra (nó único para desenvolvimento local) ─────────────────────────
+  #
+  # NOTA SOBRE MEMÓRIA:
+  # Um cluster de 3 nós Cassandra requer ~3.6GB só para os nós, o que excede
+  # o limite do Docker Desktop em ambientes locais típicos.
+  #
+  # Para fins didáticos, usamos 1 nó com um único processo Cassandra.
+  # O sharding simulado no código (3 workers + partition key shard_id) ainda
+  # funciona corretamente: o Cassandra distribui os dados internamente entre
+  # as vnodes (virtual nodes) usando consistent hashing.
+  #
+  # Para simular com 3 nós reais, aumente a memória do Docker para >= 6GB e
+  # use o perfil "cluster": docker compose --profile cluster up
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: scaling-cluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack1
+      # MAX_HEAP_SIZE e HEAP_NEWSIZE controlam a heap da JVM do Cassandra.
+      # Sem essa configuração, o Cassandra calcula automaticamente e pode
+      # alocar >1GB, causando OOM kill (exit 137) no Docker.
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "100M"
+    mem_limit: 1200m
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    networks:
+      - scaling-net
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  # ─── Cassandra Node 2 (perfil "cluster") ─────────────────────────────────────
+  # Ative com: docker compose --profile cluster up
+  # Requer >= 6GB de memória configurada no Docker Desktop.
+  cassandra-node2:
+    image: cassandra:4.1
+    container_name: cassandra-node2
+    profiles:
+      - cluster
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    environment:
+      CASSANDRA_CLUSTER_NAME: scaling-cluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack2
+      CASSANDRA_SEEDS: cassandra
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "100M"
+    mem_limit: 1200m
+    volumes:
+      - cassandra-node2-data:/var/lib/cassandra
+    networks:
+      - scaling-net
+
+  # ─── Cassandra Node 3 (perfil "cluster") ─────────────────────────────────────
+  cassandra-node3:
+    image: cassandra:4.1
+    container_name: cassandra-node3
+    profiles:
+      - cluster
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    environment:
+      CASSANDRA_CLUSTER_NAME: scaling-cluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack3
+      CASSANDRA_SEEDS: cassandra
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: "512M"
+      HEAP_NEWSIZE: "100M"
+    mem_limit: 1200m
+    volumes:
+      - cassandra-node3-data:/var/lib/cassandra
+    networks:
+      - scaling-net
+
+volumes:
+  cassandra-data:
+  cassandra-node2-data:
+  cassandra-node3-data:
+
+networks:
+  scaling-net:
+    driver: bridge
