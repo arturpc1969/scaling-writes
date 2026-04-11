@@ -35,14 +35,16 @@ app:
   cassandra:
     keyspace-name: scaling_writes
     # Fator de replicação do keyspace.
-    # Nó único (dev): 1  |  Cluster 3 nós (--profile cluster): 3
+    # RF=1: cada shard reside em exatamente 1 nó — dados distribuídos sem replicação.
+    #        Ideal para demonstrar write scaling: shard_id 0→node1, 1→node2, 2→node3.
+    # RF=3: cada dado é replicado em todos os 3 nós — todos os nós têm todos os dados.
     replication-factor: 1
 
   batch:
     # Intervalo entre cada flush do buffer para o Cassandra (em milissegundos)
     # Valor padrão: 5000ms = 5 segundos
     # Aumente para acumular batches maiores; diminua para latência menor
-    flush-interval-ms: 60000
+    flush-interval-ms: 120000
 
 # ─── SpringDoc / Swagger UI ─────────────────────────────────────────────────
 springdoc:

@@ -268,26 +268,62 @@ Abra `http://localhost:9000` para visualizar o tópico `write-events`, suas part
 
 Para simular o cluster completo com 3 nós, o Docker precisa de pelo menos **6 GB de memória** configurada.
 
-**Passo 1:** Pare os containers e limpe os volumes (necessário para que o novo nó seed ingresse o cluster com o snitch correto):
+**Pré-requisito de rede — depende de como o Docker está instalado:**
+
+O comportamento varia conforme o ambiente:
+
+| Ambiente | IPs internos acessíveis do host? | Pré-requisito |
+|---|---|---|
+| Linux + Docker Engine nativo | Sim (via bridge `docker0`) | Nenhum |
+| Linux + Docker Desktop | Não (roda em VM QEMU) | Criar aliases (ver abaixo) |
+| macOS + Docker Desktop | Não (roda em VM QEMU) | Criar aliases (ver abaixo) |
+| Windows + Docker Desktop | Não (roda em VM QEMU) | Criar aliases (ver abaixo) |
+
+Se você usa **Docker Desktop** (em qualquer SO), os containers rodam dentro de uma VM e seus IPs internos (`172.x.x.x`) não são acessíveis do host. É necessário criar aliases de loopback antes de subir o cluster:
+
+```bash
+# macOS / Windows
+sudo ifconfig lo0 alias 127.0.0.2 up
+sudo ifconfig lo0 alias 127.0.0.3 up
+
+# Linux com Docker Desktop (usa ip addr em vez de ifconfig)
+sudo ip addr add 127.0.0.2/8 dev lo
+sudo ip addr add 127.0.0.3/8 dev lo
+```
+
+> Os aliases não persistem após reboot — recrie-os sempre que reiniciar a máquina antes de subir o cluster.
+
+**Como verificar qual Docker você tem no Linux:**
+```bash
+# Docker Engine nativo: systemctl gerencia o serviço
+systemctl is-active docker   # "active" → Engine nativo, sem pré-requisito
+
+# Docker Desktop: socket próprio
+ls ~/.docker/desktop/docker.sock 2>/dev/null && echo "Docker Desktop → criar aliases"
+```
+
+**Passo 1:** Pare os containers e limpe os volumes:
 
 ```bash
 docker compose down -v
 ```
 
-**Passo 2:** Aumente a memória do Docker em Settings > Resources > Memory para **>= 6 GB**, depois suba com o perfil `cluster`:
+**Passo 2:** Aumente a memória do Docker em Settings > Resources > Memory para >= 6 GB, depois suba com o perfil `cluster`:
 
 ```bash
 docker compose --profile cluster up -d
 ```
 
-Aguarde até que todos os 3 nós estejam ativos. Você pode verificar com:
+Aguarde os 3 nós ficarem ativos:
 
 ```bash
 docker exec cassandra nodetool status
 # Resultado esperado: 3 linhas com status "UN" (Up/Normal)
+
 # UN  172.x.x.x  cassandra
 # UN  172.x.x.x  cassandra-node2
 # UN  172.x.x.x  cassandra-node3
+
 ```
 
 **Passo 3:** Altere o fator de replicação no `application.yaml`:
@@ -298,7 +334,13 @@ app:
     replication-factor: 3
 ```
 
-**Passo 4:** Inicie a aplicação normalmente. O `CassandraConfig` criará (ou recriará) o keyspace com `replication_factor=3`, distribuindo réplicas pelos 3 nós.
+**Passo 4:** Se o keyspace `scaling_writes` já existir (de uma execução anterior com RF diferente), drope-o antes de iniciar a aplicação. O `CREATE KEYSPACE IF NOT EXISTS` ignora as configurações de replicação caso o keyspace já exista, então é necessário recriá-lo manualmente:
+
+```bash
+docker exec -it cassandra cqlsh -e "DROP KEYSPACE IF EXISTS scaling_writes;"
+```
+
+**Passo 5:** Inicie a aplicação normalmente. O `CassandraConfig` criará o keyspace com `replication_factor=3`, distribuindo réplicas pelos 3 nós.
 
 ---
 
@@ -325,3 +367,11 @@ Todas as configurações ficam em `src/main/resources/application.yaml`.
 **Nome do datacenter:** Todos os nós do cluster (seed e adicionais) usam `CASSANDRA_DC: dc1` com `CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch` no `docker-compose.yml`. O `GossipingPropertyFileSnitch` é essencial para que todos os nós se reconheçam como pertencentes ao mesmo DC via gossip protocol. A configuração `local-datacenter: dc1` no `application.yaml` e o nome de DC no `CREATE KEYSPACE` (lido dinamicamente de `${spring.cassandra.local-datacenter}`) devem ser idênticos ao valor de `CASSANDRA_DC` — qualquer inconsistência faz o Cassandra não colocar réplicas em alguns nós, concentrando os dados em um subconjunto do cluster.
 
 **Inicialização do schema:** O driver Cassandra não permite conectar a um keyspace inexistente. O `CassandraConfig` resolve isso abrindo uma sessão bootstrap sem keyspace, criando o schema, e depois fornecendo a sessão definitiva (com keyspace) como bean `@Primary` para toda a aplicação.
+
+**Mudança do replication-factor:** O `CREATE KEYSPACE IF NOT EXISTS` ignora as configurações de replicação se o keyspace já existir — alterar `replication-factor` no `application.yaml` não tem efeito sobre um keyspace já criado. Para aplicar um novo RF, drope o keyspace antes de reiniciar a aplicação:
+
+```bash
+docker exec -it cassandra cqlsh -e "DROP KEYSPACE IF EXISTS scaling_writes;"
+```
+
+A aplicação recriará o keyspace com o RF configurado na próxima inicialização. **Atenção:** isso apaga todos os dados persistidos.

@@ -57,11 +57,31 @@ services:
   #
   # Para simular com 3 nós reais, aumente a memória do Docker para >= 6GB e
   # use o perfil "cluster": docker compose --profile cluster up
+  #
+  # NOTA SOBRE REDE E BROADCAST_RPC_ADDRESS:
+  # Os nós do cluster anunciam seu endereço ao driver Java via gossip
+  # (tabela system.peers_v2). Sem CASSANDRA_BROADCAST_RPC_ADDRESS, cada nó
+  # anuncia seu IP interno do Docker (172.18.x.x).
+  #
+  # O comportamento depende de como o Docker está instalado:
+  #
+  # - Linux (Docker Engine nativo): a bridge docker0 é acessível diretamente
+  #   do host e 127.x.x.x já é loopback no kernel — nenhum pré-requisito.
+  #
+  # - macOS / Windows (Docker Desktop): containers rodam em uma VM (QEMU),
+  #   IPs internos não são acessíveis do host. Crie os aliases antes de subir:
+  #     sudo ifconfig lo0 alias 127.0.0.2 up   # macOS
+  #     sudo ifconfig lo0 alias 127.0.0.3 up   # macOS
+  #
+  # - Linux (Docker Desktop): também usa VM (QEMU), mesma restrição do macOS.
+  #   Use ip addr em vez de ifconfig:
+  #     sudo ip addr add 127.0.0.2/8 dev lo
+  #     sudo ip addr add 127.0.0.3/8 dev lo
   cassandra:
     image: cassandra:4.1
     container_name: cassandra
     ports:
-      - "9042:9042"
+      - "127.0.0.1:9042:9042"
     environment:
       CASSANDRA_CLUSTER_NAME: scaling-cluster
       CASSANDRA_DC: dc1
@@ -71,6 +91,10 @@ services:
       # SimpleSnitch (padrão), que ignora DC/rack — causando inconsistência de
       # placement com os demais nós que usam GossipingPropertyFileSnitch.
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      # BROADCAST_RPC_ADDRESS: endereço anunciado ao driver Java via system.peers_v2.
+      # Cada nó usa um IP de loopback distinto, permitindo que o driver Java
+      # alcance cada nó individualmente a partir do host.
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.1
       # MAX_HEAP_SIZE e HEAP_NEWSIZE controlam a heap da JVM do Cassandra.
       # Sem essa configuração, o Cassandra calcula automaticamente e pode
       # alocar >1GB, causando OOM kill (exit 137) no Docker.
@@ -91,6 +115,9 @@ services:
   # ─── Cassandra Node 2 (perfil "cluster") ─────────────────────────────────────
   # Ative com: docker compose --profile cluster up
   # Requer >= 6GB de memória configurada no Docker Desktop.
+  # Pré-requisito (Docker Desktop — macOS/Windows): sudo ifconfig lo0 alias 127.0.0.2 up
+  # Pré-requisito (Docker Desktop — Linux):         sudo ip addr add 127.0.0.2/8 dev lo
+  # Docker Engine nativo no Linux: nenhum pré-requisito necessário.
   cassandra-node2:
     image: cassandra:4.1
     container_name: cassandra-node2
@@ -99,12 +126,15 @@ services:
     depends_on:
       cassandra:
         condition: service_healthy
+    ports:
+      - "127.0.0.2:9042:9042"
     environment:
       CASSANDRA_CLUSTER_NAME: scaling-cluster
       CASSANDRA_DC: dc1
       CASSANDRA_RACK: rack2
       CASSANDRA_SEEDS: cassandra
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.2
       MAX_HEAP_SIZE: "512M"
       HEAP_NEWSIZE: "100M"
     mem_limit: 1200m
@@ -114,6 +144,9 @@ services:
       - scaling-net
 
   # ─── Cassandra Node 3 (perfil "cluster") ─────────────────────────────────────
+  # Pré-requisito (Docker Desktop — macOS/Windows): sudo ifconfig lo0 alias 127.0.0.3 up
+  # Pré-requisito (Docker Desktop — Linux):         sudo ip addr add 127.0.0.3/8 dev lo
+  # Docker Engine nativo no Linux: nenhum pré-requisito necessário.
   cassandra-node3:
     image: cassandra:4.1
     container_name: cassandra-node3
@@ -122,12 +155,15 @@ services:
     depends_on:
       cassandra:
         condition: service_healthy
+    ports:
+      - "127.0.0.3:9042:9042"
     environment:
       CASSANDRA_CLUSTER_NAME: scaling-cluster
       CASSANDRA_DC: dc1
       CASSANDRA_RACK: rack3
       CASSANDRA_SEEDS: cassandra
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.3
       MAX_HEAP_SIZE: "512M"
       HEAP_NEWSIZE: "100M"
     mem_limit: 1200m
