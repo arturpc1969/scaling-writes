@@ -89,7 +89,7 @@ public class CassandraConfig {
                     "CREATE KEYSPACE IF NOT EXISTS %s " +
                     "WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': %d} " +
                     "AND durable_writes = true;",
-                    keyspaceName, localDatacenter, replicationFactor
+                    keyspaceName, replicationFactor
             ));
             log.info("Keyspace '{}' verificado/criado (replication-factor={}).", keyspaceName, replicationFactor);
 
