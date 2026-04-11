@@ -41,7 +41,7 @@ public class CassandraConfig {
     @Value("${spring.cassandra.contact-points:localhost:9042}")
     private String contactPoints;
 
-    @Value("${spring.cassandra.local-datacenter:datacenter1}")
+    @Value("${spring.cassandra.local-datacenter:dc1}")
     private String localDatacenter;
 
     @Value("${app.cassandra.keyspace-name:scaling_writes}")
@@ -83,11 +83,11 @@ public class CassandraConfig {
 
             bootstrap.execute(String.format(
                     "CREATE KEYSPACE IF NOT EXISTS %s " +
-                    "WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': %d} " +
+                    "WITH replication = {'class': 'NetworkTopologyStrategy', 'dc1': %d} " +
                     "AND durable_writes = true;",
                     keyspaceName, replicationFactor
             ));
-            log.info("Keyspace '{}' verificado/criado.", keyspaceName);
+            log.info("Keyspace '{}' verificado/criado (replication-factor={}).", keyspaceName, replicationFactor);
 
             bootstrap.execute(String.format(
                     "CREATE TABLE IF NOT EXISTS %s.write_events (" +

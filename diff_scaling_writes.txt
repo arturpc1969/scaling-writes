@@ -1,0 +1,153 @@
+diff --git a/README.md b/README.md
+index a9d0ab2..2e4a6e8 100644
+--- a/README.md
++++ b/README.md
+@@ -298,7 +298,13 @@ app:
+     replication-factor: 3
+ ```
+ 
+-**Passo 4:** Inicie a aplicação normalmente. O `CassandraConfig` criará (ou recriará) o keyspace com `replication_factor=3`, distribuindo réplicas pelos 3 nós.
++**Passo 4:** Se o keyspace `scaling_writes` já existir (de uma execução anterior com RF diferente), drope-o antes de iniciar a aplicação. O `CREATE KEYSPACE IF NOT EXISTS` ignora as configurações de replicação caso o keyspace já exista, então é necessário recriá-lo manualmente:
++
++```bash
++docker exec -it cassandra cqlsh -e "DROP KEYSPACE IF EXISTS scaling_writes;"
++```
++
++**Passo 5:** Inicie a aplicação normalmente. O `CassandraConfig` criará o keyspace com `replication_factor=3`, distribuindo réplicas pelos 3 nós.
+ 
+ ---
+ 
+@@ -325,3 +331,11 @@ Todas as configurações ficam em `src/main/resources/application.yaml`.
+ **Nome do datacenter:** Todos os nós do cluster (seed e adicionais) usam `CASSANDRA_DC: dc1` com `CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch` no `docker-compose.yml`. O `GossipingPropertyFileSnitch` é essencial para que todos os nós se reconheçam como pertencentes ao mesmo DC via gossip protocol. A configuração `local-datacenter: dc1` no `application.yaml` e o nome de DC no `CREATE KEYSPACE` (lido dinamicamente de `${spring.cassandra.local-datacenter}`) devem ser idênticos ao valor de `CASSANDRA_DC` — qualquer inconsistência faz o Cassandra não colocar réplicas em alguns nós, concentrando os dados em um subconjunto do cluster.
+ 
+ **Inicialização do schema:** O driver Cassandra não permite conectar a um keyspace inexistente. O `CassandraConfig` resolve isso abrindo uma sessão bootstrap sem keyspace, criando o schema, e depois fornecendo a sessão definitiva (com keyspace) como bean `@Primary` para toda a aplicação.
++
++**Mudança do replication-factor:** O `CREATE KEYSPACE IF NOT EXISTS` ignora as configurações de replicação se o keyspace já existir — alterar `replication-factor` no `application.yaml` não tem efeito sobre um keyspace já criado. Para aplicar um novo RF, drope o keyspace antes de reiniciar a aplicação:
++
++```bash
++docker exec -it cassandra cqlsh -e "DROP KEYSPACE IF EXISTS scaling_writes;"
++```
++
++A aplicação recriará o keyspace com o RF configurado na próxima inicialização. **Atenção:** isso apaga todos os dados persistidos.
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 022c176..4ffd0be 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -57,11 +57,22 @@ services:
+   #
+   # Para simular com 3 nós reais, aumente a memória do Docker para >= 6GB e
+   # use o perfil "cluster": docker compose --profile cluster up
++  #
++  # NOTA SOBRE REDE (macOS + Docker Desktop):
++  # Os nós do cluster anunciam seu endereço via gossip (CASSANDRA_BROADCAST_RPC_ADDRESS).
++  # Sem essa configuração, os nós anunciam o IP interno do Docker (172.18.x.x),
++  # que não é acessível a partir do host macOS — fazendo o driver Java ignorar
++  # os nós adicionais e rotear todas as escritas apenas pelo nó seed.
++  #
++  # Solução: cada nó anuncia um IP de loopback distinto e o Docker expõe a porta
++  # correspondente nesse IP. Antes de subir o cluster, crie os aliases no macOS:
++  #   sudo ifconfig lo0 alias 127.0.0.2 up
++  #   sudo ifconfig lo0 alias 127.0.0.3 up
+   cassandra:
+     image: cassandra:4.1
+     container_name: cassandra
+     ports:
+-      - "9042:9042"
++      - "127.0.0.1:9042:9042"
+     environment:
+       CASSANDRA_CLUSTER_NAME: scaling-cluster
+       CASSANDRA_DC: dc1
+@@ -71,6 +82,9 @@ services:
+       # SimpleSnitch (padrão), que ignora DC/rack — causando inconsistência de
+       # placement com os demais nós que usam GossipingPropertyFileSnitch.
+       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
++      # BROADCAST_RPC_ADDRESS: endereço anunciado ao driver Java via system.peers_v2.
++      # Deve ser um IP acessível a partir do host (loopback alias criado acima).
++      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.1
+       # MAX_HEAP_SIZE e HEAP_NEWSIZE controlam a heap da JVM do Cassandra.
+       # Sem essa configuração, o Cassandra calcula automaticamente e pode
+       # alocar >1GB, causando OOM kill (exit 137) no Docker.
+@@ -91,6 +105,7 @@ services:
+   # ─── Cassandra Node 2 (perfil "cluster") ─────────────────────────────────────
+   # Ative com: docker compose --profile cluster up
+   # Requer >= 6GB de memória configurada no Docker Desktop.
++  # Pré-requisito no macOS: sudo ifconfig lo0 alias 127.0.0.2 up
+   cassandra-node2:
+     image: cassandra:4.1
+     container_name: cassandra-node2
+@@ -99,12 +114,15 @@ services:
+     depends_on:
+       cassandra:
+         condition: service_healthy
++    ports:
++      - "127.0.0.2:9042:9042"
+     environment:
+       CASSANDRA_CLUSTER_NAME: scaling-cluster
+       CASSANDRA_DC: dc1
+       CASSANDRA_RACK: rack2
+       CASSANDRA_SEEDS: cassandra
+       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
++      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.2
+       MAX_HEAP_SIZE: "512M"
+       HEAP_NEWSIZE: "100M"
+     mem_limit: 1200m
+@@ -114,6 +132,7 @@ services:
+       - scaling-net
+ 
+   # ─── Cassandra Node 3 (perfil "cluster") ─────────────────────────────────────
++  # Pré-requisito no macOS: sudo ifconfig lo0 alias 127.0.0.3 up
+   cassandra-node3:
+     image: cassandra:4.1
+     container_name: cassandra-node3
+@@ -122,12 +141,15 @@ services:
+     depends_on:
+       cassandra:
+         condition: service_healthy
++    ports:
++      - "127.0.0.3:9042:9042"
+     environment:
+       CASSANDRA_CLUSTER_NAME: scaling-cluster
+       CASSANDRA_DC: dc1
+       CASSANDRA_RACK: rack3
+       CASSANDRA_SEEDS: cassandra
+       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
++      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.3
+       MAX_HEAP_SIZE: "512M"
+       HEAP_NEWSIZE: "100M"
+     mem_limit: 1200m
+diff --git a/src/main/java/com/arturpc/scaling_writes/config/CassandraConfig.java b/src/main/java/com/arturpc/scaling_writes/config/CassandraConfig.java
+index 81a7ebc..b4d6e9c 100644
+--- a/src/main/java/com/arturpc/scaling_writes/config/CassandraConfig.java
++++ b/src/main/java/com/arturpc/scaling_writes/config/CassandraConfig.java
+@@ -91,7 +91,7 @@ public class CassandraConfig {
+                     "AND durable_writes = true;",
+                     keyspaceName, localDatacenter, replicationFactor
+             ));
+-            log.info("Keyspace '{}' verificado/criado.", keyspaceName);
++            log.info("Keyspace '{}' verificado/criado (replication-factor={}).", keyspaceName, replicationFactor);
+ 
+             bootstrap.execute(String.format(
+                     "CREATE TABLE IF NOT EXISTS %s.write_events (" +
+diff --git a/src/main/resources/application.yaml b/src/main/resources/application.yaml
+index 8371b1b..d568940 100644
+--- a/src/main/resources/application.yaml
++++ b/src/main/resources/application.yaml
+@@ -35,14 +35,16 @@ app:
+   cassandra:
+     keyspace-name: scaling_writes
+     # Fator de replicação do keyspace.
+-    # Nó único (dev): 1  |  Cluster 3 nós (--profile cluster): 3
++    # RF=1: cada shard reside em exatamente 1 nó — dados distribuídos sem replicação.
++    #        Ideal para demonstrar write scaling: shard_id 0→node1, 1→node2, 2→node3.
++    # RF=3: cada dado é replicado em todos os 3 nós — todos os nós têm todos os dados.
+     replication-factor: 1
+ 
+   batch:
+     # Intervalo entre cada flush do buffer para o Cassandra (em milissegundos)
+     # Valor padrão: 5000ms = 5 segundos
+     # Aumente para acumular batches maiores; diminua para latência menor
+-    flush-interval-ms: 60000
++    flush-interval-ms: 120000
+ 
+ # ─── SpringDoc / Swagger UI ─────────────────────────────────────────────────
+ springdoc:
