@@ -319,6 +319,11 @@ Aguarde os 3 nós ficarem ativos:
 ```bash
 docker exec cassandra nodetool status
 # Resultado esperado: 3 linhas com status "UN" (Up/Normal)
+
+# UN  172.x.x.x  cassandra
+# UN  172.x.x.x  cassandra-node2
+# UN  172.x.x.x  cassandra-node3
+
 ```
 
 **Passo 3:** Altere o fator de replicação no `application.yaml`:
@@ -348,7 +353,7 @@ Todas as configurações ficam em `src/main/resources/application.yaml`.
 | `spring.kafka.bootstrap-servers` | `localhost:9092` | Endereço do broker Kafka |
 | `spring.kafka.consumer.group-id` | `scaling-writes-group` | Consumer group dos workers |
 | `spring.cassandra.contact-points` | `localhost:9042` | Endereço do nó Cassandra |
-| `spring.cassandra.local-datacenter` | `datacenter1` | Nome do datacenter Cassandra |
+| `spring.cassandra.local-datacenter` | `dc1` | Nome do datacenter Cassandra |
 | `app.cassandra.keyspace-name` | `scaling_writes` | Keyspace utilizado |
 | `app.cassandra.replication-factor` | `1` | Fator de replicação do keyspace |
 | `app.batch.flush-interval-ms` | `60000` | Intervalo do flush do buffer (ms) |

@@ -19,9 +19,11 @@ spring:
   # ─── Cassandra ──────────────────────────────────────────────────────────────
   cassandra:
     contact-points: localhost:9042
-    # O Cassandra usa "datacenter1" como nome padrão do DC quando
-    # CASSANDRA_ENDPOINT_SNITCH não é GossipingPropertyFileSnitch ou quando
-    # CASSANDRA_DC não é efetivamente aplicado na imagem oficial.
+    # Deve coincidir com CASSANDRA_DC definido no docker-compose.yml.
+    # Todos os nós (nó único e cluster) usam CASSANDRA_DC: dc1 com
+    # GossipingPropertyFileSnitch — portanto o DC reportado via gossip é "dc1".
+    # O CREATE KEYSPACE lê este valor via ${spring.cassandra.local-datacenter},
+    # garantindo consistência entre a configuração do cluster e o keyspace.
     local-datacenter: dc1
     # keyspace-name é omitido aqui intencionalmente:
     # o driver conecta sem keyspace, o CassandraConfig cria o keyspace,
